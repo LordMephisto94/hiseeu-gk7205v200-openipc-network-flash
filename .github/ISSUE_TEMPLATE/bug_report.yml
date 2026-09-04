@@ -1,0 +1,121 @@
+name: Bug report
+description: Report a problem with the scripts, guide, or flashing workflow
+title: "[Bug]: "
+labels:
+  - bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem.
+
+        **Do not include passwords, tokens, credentials, or unrelated packet-capture data.**
+
+        If this may be a security vulnerability, please use private vulnerability reporting rather than opening a public issue.
+
+  - type: input
+    id: camera
+    attributes:
+      label: Camera brand/model
+      placeholder: Hiseeu 2MP PTZ PoE
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: XM hardware ID
+      placeholder: IPC_GK7205V200_G5C-LQ_S38
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Stock firmware version
+      placeholder: General_IPC_...
+    validations:
+      required: false
+
+  - type: input
+    id: openipc
+    attributes:
+      label: OpenIPC build/version
+      placeholder: master+...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where did the problem occur?
+      options:
+        - CheckCode capture/extraction
+        - NetIPTelnet shell
+        - Firmware image building
+        - XM CRC / InstallDesc generation
+        - Package reordering
+        - DVRIP upload
+        - Flashing / reboot
+        - OpenIPC runtime
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include complete relevant error output where possible.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact commands used.
+    validations:
+      required: true
+
+  - type: textarea
+    id: mtd
+    attributes:
+      label: Flash/layout information
+      description: Include /proc/mtd, /proc/cmdline, or fw_printenv if relevant.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: boots
+    attributes:
+      label: Does the camera still boot?
+      options:
+        - Yes, stock firmware
+        - Yes, OpenIPC
+        - Yes, but partially/broken
+        - No
+        - Not applicable
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I verified the hardware ID rather than relying on enclosure appearance.
+          required: true
+        - label: I removed passwords, tokens, credentials, and unrelated private network data.
+          required: true

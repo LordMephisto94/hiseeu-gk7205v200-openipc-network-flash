@@ -1,0 +1,81 @@
+name: Hardware compatibility report
+description: Report testing on another XM/Hiseeu camera revision
+title: "[Hardware]: "
+labels:
+  - hardware
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to document real hardware testing.
+
+        Please do not report compatibility based only on appearance or a reseller listing.
+
+  - type: input
+    id: brand
+    attributes:
+      label: Brand/model
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: XM hardware ID
+      placeholder: IPC_GK7205V200_G5C-LQ_S38
+    validations:
+      required: true
+
+  - type: input
+    id: soc
+    attributes:
+      label: SoC
+      placeholder: GK7205V200
+    validations:
+      required: true
+
+  - type: input
+    id: sensor
+    attributes:
+      label: Image sensor
+      placeholder: SC223A
+
+  - type: input
+    id: flash
+    attributes:
+      label: SPI flash chip and capacity
+      placeholder: XT25F64B, 8 MiB
+
+  - type: textarea
+    id: stock
+    attributes:
+      label: Stock firmware and /proc/mtd
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: openipc
+    attributes:
+      label: OpenIPC build used
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Successful network-only conversion
+        - Successful conversion with recovery intervention
+        - Dry-run only
+        - Failed, camera still boots
+        - Failed, camera no longer boots
+        - Research only / not flashed
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes and differences
+      description: Include flash-layout, GPIO, PTZ, audio, or other differences.

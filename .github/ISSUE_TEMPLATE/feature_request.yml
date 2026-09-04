@@ -1,0 +1,40 @@
+name: Feature or documentation request
+description: Suggest an improvement to the tools or documentation
+title: "[Request]: "
+labels:
+  - enhancement
+
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Request type
+      options:
+        - Documentation improvement
+        - Script/tool improvement
+        - Hardware support
+        - Recovery documentation
+        - OpenIPC runtime feature
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Hardware/testing information
+      description: Include relevant hardware IDs, firmware versions, logs, or testing notes.

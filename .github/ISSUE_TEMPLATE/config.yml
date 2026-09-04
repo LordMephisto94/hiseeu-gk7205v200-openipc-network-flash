@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/LordMephisto94/hiseeu-gk7205v200-openipc-network-flash/security
+    about: Report security-sensitive issues privately rather than opening a public issue.
