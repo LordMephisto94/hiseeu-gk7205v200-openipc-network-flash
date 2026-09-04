@@ -1,4 +1,6 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![OpenIPC](https://img.shields.io/badge/OpenIPC-GK7205V200-informational)](https://openipc.org/)
+[![Related: OpenIPC Coupler](https://img.shields.io/badge/Related-OpenIPC%2Fcoupler-informational)](https://github.com/OpenIPC/coupler)
 
 # Flash OpenIPC to the Hiseeu 2MP PTZ PoE Camera Entirely Over Ethernet
 
@@ -39,6 +41,48 @@ OpenIPC boots via the original XM U-Boot
 
 > [!IMPORTANT]
 > Do **not** use this guide solely because your camera enclosure looks the same. Verify the hardware and stock firmware first.
+
+---
+
+## Relationship to OpenIPC Coupler
+
+OpenIPC already maintains the official [`OpenIPC/coupler`](https://github.com/OpenIPC/coupler) project, which provides automatically generated transition firmware for supported stock camera Device IDs.
+
+**Use Coupler first if it has a binary that exactly matches your camera's Device ID and stock firmware family.** OpenIPC's own Coupler documentation warns against choosing an image merely because the SoC or enclosure looks similar.
+
+At the time this guide was written, Coupler listed GK7205V200 transition images for Device IDs including:
+
+```text
+000659A7
+000659CD
+000659I7
+```
+
+The camera documented here belongs to the **`000659O6`** family:
+
+```text
+Stock DevID: 000659O61001000000000200
+Hardware:    IPC_GK7205V200_G5C-LQ_S38
+Sensor:      SC223A
+Flash:       8 MiB SPI NOR
+```
+
+`000659O6` was not present in Coupler's supported-device list when this project was prepared.
+
+That is the gap this repository documents: a **tested, network-only conversion path for this specific unsupported XM firmware/hardware family**, including the pieces that had to be reverse engineered to make the stock updater accept and flash OpenIPC:
+
+- extraction of XM's rotating NetIPTelnet CheckCode from UDP/30000 cloud traffic,
+- access to the stock DVRIP `NetIPTelnet` diagnostic shell,
+- reconstruction of XM-compatible burn-image wrappers,
+- reconstruction of XM's custom package `CRC`,
+- preservation of the firmware-specific `InstallDesc` metadata,
+- deliberate `kernel → rootfs → rootfs_data → env` burn ordering,
+- and a DVRIP/TCP 34567 uploader reproducing XM's stock upgrade transport.
+
+This repository is **not a replacement for OpenIPC Coupler**, and it is not an official OpenIPC project. It is a hardware-specific research and installation guide for a target that was not covered by Coupler when tested.
+
+> [!NOTE]
+> Coupler support changes over time. Before using this guide on another camera, check the current [`OpenIPC/coupler`](https://github.com/OpenIPC/coupler) supported-device list. If an exact matching Device ID is now available there, the official Coupler route will generally be the simpler starting point.
 
 ---
 
@@ -765,8 +809,11 @@ See [`LICENSE`](LICENSE) for the full license text. Contributions are welcome; s
 
 ## Credits
 
-- OpenIPC project and contributors
+- [OpenIPC](https://openipc.org/) project and contributors
+- [`OpenIPC/coupler`](https://github.com/OpenIPC/coupler) for the official supported-device transition-firmware approach
 - OpenIPC GK7205V200 maintainers
 - Xiongmai/XM reverse-engineering community
+
+This repository is an independent community project and is not affiliated with or endorsed by Hiseeu, Xiongmai, or OpenIPC.
 
 This guide documents one verified Hiseeu/XM hardware revision. Contributions for other revisions should include the exact hardware ID, SoC, sensor, flash chip/size and stock firmware version.
