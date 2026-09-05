@@ -82,6 +82,8 @@ Before opening a pull request, run:
 
 ```sh
 python -m py_compile scripts/*.py
+python -m unittest discover -s tests -v
+sha256sum -c SHA256SUMS
 ```
 
 If you modify the XM package builder or CRC logic, include the dry-run output and explain what changed.
@@ -141,3 +143,5 @@ Please redact passwords and other secrets.
 By contributing to this repository, you agree that your contribution may be distributed under the repository's **GNU General Public License v3.0 or later** terms.
 
 See [`LICENSE`](LICENSE).
+
+When changing a file listed in `SHA256SUMS`, regenerate its hash. Include new Python helpers in the manifest. CI checks the manifest as well as offline safety tests. Do not run hardware operations in CI.

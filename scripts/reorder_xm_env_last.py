@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -27,9 +29,13 @@ def main():
     if args.output is None:
         args.output = src.with_name(src.stem + "_env-last" + src.suffix)
     dst = args.output
+    if src.resolve() == dst.resolve() or (dst.exists() and src.samefile(dst)):
+        raise SystemExit("Input and output must be different files")
 
     with zipfile.ZipFile(src, "r") as zin:
         names = zin.namelist()
+        if len(names) != len(set(names)):
+            raise SystemExit("Duplicate ZIP entries are not supported")
         if "InstallDesc" not in names:
             raise SystemExit("InstallDesc not found")
 
@@ -42,6 +48,8 @@ def main():
         other = []
         for cmd in cmds:
             if isinstance(cmd, dict) and cmd.get("Command") in ("Burn", "BurnAll"):
+                if cmd.get("FileName") in burn_by_name:
+                    raise SystemExit("Duplicate burn entries are not supported")
                 burn_by_name[cmd.get("FileName")] = cmd
             else:
                 other.append(cmd)
@@ -62,18 +70,28 @@ def main():
         desc["UpgradeCommand"] = [burn_by_name[name] for name in PREFERRED] + other
         new_desc = json.dumps(desc, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
-        with zipfile.ZipFile(dst, "w") as zout:
-            for info in zin.infolist():
-                data = new_desc if info.filename == "InstallDesc" else zin.read(info.filename)
-                new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
-                new_info.compress_type = info.compress_type
-                new_info.comment = info.comment
-                new_info.extra = info.extra
-                new_info.internal_attr = info.internal_attr
-                new_info.external_attr = info.external_attr
-                new_info.create_system = info.create_system
-                new_info.flag_bits = info.flag_bits
-                zout.writestr(new_info, data)
+        fd, temporary = tempfile.mkstemp(prefix=".xm-reorder-", dir=dst.parent)
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(temporary, "w") as zout:
+                for info in zin.infolist():
+                    data = new_desc if info.filename == "InstallDesc" else zin.read(info.filename)
+                    new_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                    new_info.compress_type = info.compress_type
+                    new_info.comment = info.comment
+                    new_info.extra = info.extra
+                    new_info.internal_attr = info.internal_attr
+                    new_info.external_attr = info.external_attr
+                    new_info.create_system = info.create_system
+                    new_info.flag_bits = info.flag_bits
+                    zout.writestr(new_info, data)
+            with zipfile.ZipFile(temporary) as check:
+                if check.testzip():
+                    raise SystemExit("Output ZIP integrity check failed")
+            os.replace(temporary, dst)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     with zipfile.ZipFile(dst, "r") as z:
         bad = z.testzip()

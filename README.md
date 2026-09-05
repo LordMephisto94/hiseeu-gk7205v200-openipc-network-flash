@@ -148,7 +148,7 @@ scripts/
 
 You also need:
 
-- Python 3
+- Python 3.10 or later (CI checks Python 3.10 and 3.13)
 - `openssl`
 - `tcpdump` (or a PCAP captured by your router/SPAN port)
 - `zip` / `unzip`
@@ -162,6 +162,8 @@ The Python scripts that use DVRIP import:
 ```python
 from dvrip import DVRIPCam
 ```
+
+The exact `python-dvr` revision used in the original session was not recorded. No dependency revision is claimed as verified by this repository. Record the commit hash of your checkout with your installation notes; network operation requires `DVRIPCam` and `send_custom(..., version=1)`.
 
 If `dvrip.py` is in a separate checkout, use `PYTHONPATH`, for example:
 
@@ -496,7 +498,7 @@ At this point the original generated descriptor has the environment first. We de
 
 ## 11. Move the U-Boot environment burn to LAST
 
-This is a safety measure. If the upgrade dies while writing the large payloads, the old boot environment remains active until the kernel/rootfs/rootfs_data are already written.
+This reduces risk by retaining the old boot environment until the kernel/rootfs/rootfs_data have been written. It does **not** provide rollback or guarantee recovery after interruption: earlier writes overlap the stock firmware partitions, so the camera may no longer boot even with its original environment.
 
 Run:
 
@@ -545,7 +547,9 @@ env PYTHONPATH=$HOME/Documents/python-dvr \
   ./OpenIPC_GK7205V200_all_env-last.bin
 ```
 
-Nothing is sent without `--flash`.
+Nothing is sent without `--flash`, which also requires an explicit `--host`. Offline validation and `--help` do not require the `dvrip` dependency.
+
+Validation rejects missing or duplicate entries, unsupported package Hardware/DevID, unexpected commands or burn ordering, invalid wrapper checksums or write ranges, and a mismatched custom package CRC. These checks validate package contents; they do not establish the identity or compatibility of a connected camera.
 
 Inspect the displayed:
 

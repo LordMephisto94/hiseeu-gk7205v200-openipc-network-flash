@@ -29,7 +29,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from dvrip import DVRIPCam
+from package_safety import check_package
 
 
 WIRE_HEADER = struct.Struct("<BB2xIIBBHI")  # head,ver,pad,session,seq,channel,end,msgid,len
@@ -150,6 +150,7 @@ def send_keepalive(sock: socket.socket, session: int, seq: int):
 
 
 def validate_package(path: Path):
+    check_package(path)
     size = path.stat().st_size
     print(f"Package : {path}")
     print(f"Size    : {size:,} bytes")
@@ -198,6 +199,8 @@ def validate_package(path: Path):
 
 
 def make_cam(host: str, port: int, user: str, password: str):
+    from dvrip import DVRIPCam
+
     # Different python-dvr revisions use slightly different constructor
     # signatures, so handle both.
     try:
@@ -535,7 +538,7 @@ def main():
         description="Upload XM firmware over DVRIP port 34567."
     )
     ap.add_argument("firmware", type=Path, help="XM .bin/.zip firmware package")
-    ap.add_argument("--host", default="172.16.10.44")
+    ap.add_argument("--host", help="camera address (required with --flash)")
     ap.add_argument("--port", type=int, default=34567)
     ap.add_argument("--user", default="admin")
     ap.add_argument(
@@ -553,6 +556,8 @@ def main():
         help="skip the final interactive confirmation",
     )
     args = ap.parse_args()
+    if args.flash and not args.host:
+        ap.error("--host is required with --flash")
 
     path = args.firmware.expanduser().resolve()
     if not path.is_file():

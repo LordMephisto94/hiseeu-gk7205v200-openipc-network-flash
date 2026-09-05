@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+openipc-xm-build/
+stock-firmware-extracted/
+backup*/
+*.bin
+*.img
+*.raw
+*.pcap
+*.pcapng
+uImage.*
+rootfs.squashfs.*
