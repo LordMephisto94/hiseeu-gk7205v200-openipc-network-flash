@@ -284,17 +284,30 @@ def verify_target(cam: DVRIPCam, descriptor: dict, force: bool = False):
         "DevID": ("DevID", "DeviceID", "DevId", "device_id"),
     }
     mismatches = []
+    unavailable = []
     observed = {}
     for field, names in aliases.items():
         value = next((info.get(name) for name in names if info.get(name) is not None), None)
         observed[field] = value
         expected = descriptor.get(field)
         if value is None:
-            mismatches.append(f"{field} unavailable (expected {expected!r})")
+            if field == "DevID":
+                # This stock firmware's OPSystemUpgrade response omits DevID.
+                # Hardware remains mandatory; a DevID that is present must
+                # still match exactly.
+                unavailable.append(field)
+            else:
+                mismatches.append(f"{field} unavailable (expected {expected!r})")
         elif value != expected:
             mismatches.append(f"{field}={value!r} (expected {expected!r})")
 
     print(f"Camera identity: Hardware={observed['Hardware']!r} DevID={observed['DevID']!r}")
+    if unavailable:
+        print(
+            "WARNING: camera did not report "
+            + ", ".join(unavailable)
+            + "; the stock updater will still validate the package descriptor."
+        )
     if mismatches:
         message = "camera identity does not match the package: " + "; ".join(mismatches)
         if not force:

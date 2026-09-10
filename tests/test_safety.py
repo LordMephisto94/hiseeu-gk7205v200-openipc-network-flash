@@ -200,6 +200,9 @@ class SafetyTests(unittest.TestCase):
             "DevID": "000659O61001000000000200",
         }
         xm_upgrade.verify_target(Camera(descriptor), descriptor)
+        xm_upgrade.verify_target(
+            Camera({"Hardware": descriptor["Hardware"]}), descriptor
+        )
         with self.assertRaisesRegex(RuntimeError, "does not match"):
             xm_upgrade.verify_target(
                 Camera({"Hardware": "other", "DevID": descriptor["DevID"]}),

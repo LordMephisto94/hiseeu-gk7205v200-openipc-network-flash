@@ -170,7 +170,9 @@ from dvrip import DVRIPCam
 Record the exact `python-dvr` commit used for a flash. Network operation
 requires `DVRIPCam`, `get_upgrade_info()` and
 `send_custom(..., version=1)`; the uploader now checks the remote hardware
-identity before it asks for the destructive confirmation.
+identity before it asks for the destructive confirmation. This stock firmware
+reports `Hardware` but omits `DevID`; a reported `DevID` is checked when
+available, while an absent one is logged as a warning.
 
 If `dvrip.py` is in a separate checkout, use `PYTHONPATH`, for example:
 
@@ -559,9 +561,11 @@ Nothing is sent without `--flash`, which also requires an explicit `--host`. Off
 Offline validation rejects missing or duplicate entries, unsupported package Hardware/DevID, unexpected commands or burn ordering, invalid wrapper checksums or write ranges, and a mismatched custom package CRC. The connected-camera identity check happens only when `--flash` is used.
 
 When `--flash` is used, the uploader also queries the connected camera and
-requires its `Hardware` and `DevID` to match the package. `--force-target` is
-available only for a manually verified exception and should not be used as a
-normal workflow.
+requires its `Hardware` to match the package. A reported `DevID` must also
+match; this stock firmware omits that field, so the uploader logs a warning
+and relies on the stock updater's descriptor validation. `--force-target` is
+available only for a manually verified hardware exception and should not be
+used as a normal workflow.
 
 Inspect the displayed:
 
@@ -617,7 +621,8 @@ FLASH CAMERA_IP
 ```
 
 Before that confirmation it displays the camera's reported `Hardware` and
-`DevID`. Stop if they do not match the package. The transfer requires the
+`DevID` when available. Stop if a reported value does not match the package.
+The transfer requires the
 final firmware chunks to be acknowledged or for the camera to enter its flash
 progress state; after 100%, the expected terminal status is `Ret=515` or the
 camera must close the DVRIP session as it reboots.
