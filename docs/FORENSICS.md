@@ -10,5 +10,10 @@
 - Mx8Q verification was effectively disabled on the tested stock build because `/usr/bin/Squirrel/rs485/TransparentBase` was absent; do not generalise this to other builds.
 - Environment burn was deliberately reordered last.
 - DVRIP uploader uses 32 KiB chunks and sets `end_flag=1` on the last `0x05F2` frame.
+- Some stock builds send flash progress as an unframed JSON object after the
+  upload (for example `{"Name":"OPSystemUpgrade","Ret":53}`) instead of a
+  `0x05F4` DVRIP frame. The uploader accepts this form only during progress
+  handling and still requires 100% plus terminal `Ret=515` or a rebooted
+  connection before reporting success.
 - Known-good vendor progress sequence ended `100,100,100,515`; 515 after 100% preceded reboot.
 - Successful first OpenIPC boot used DHCP and retained the original MAC.

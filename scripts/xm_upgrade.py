@@ -59,7 +59,19 @@ def recv_exact(sock: socket.socket, n: int) -> bytes | None:
     return bytes(buf)
 
 
-def recv_frame(sock: socket.socket, timeout: float = 1.0):
+def recv_frame(
+    sock: socket.socket,
+    timeout: float = 1.0,
+    *,
+    allow_raw_json: bool = False,
+):
+    """Read one DVRIP frame.
+
+    The stock updater normally wraps progress in a 0xFF DVRIP header, but
+    some stock builds switch to a plain JSON status object while the flash is
+    being written.  ``allow_raw_json`` is limited to the status phase so a
+    malformed response during the upload still fails closed.
+    """
     old_timeout = sock.gettimeout()
     sock.settimeout(timeout)
     try:
@@ -79,6 +91,34 @@ def recv_frame(sock: socket.socket, timeout: float = 1.0):
         ) = WIRE_HEADER.unpack(hdr)
 
         if head != 0xFF:
+            if allow_raw_json and hdr[:1] == b"{":
+                raw = bytearray(hdr)
+                while True:
+                    body = bytes(raw).rstrip(b"\x00\r\n ")
+                    obj = decode_json(body)
+                    if obj is not None:
+                        return {
+                            "head": 0x7B,
+                            "version": 0,
+                            "session": 0,
+                            "seq": 0,
+                            "channel": 0,
+                            "end_flag": 0,
+                            "msgid": MSG_UPGRADE_PROGRESS,
+                            "length": len(body),
+                            "body": body,
+                            "raw_json": True,
+                        }
+                    if len(raw) >= MAX_FRAME_LENGTH:
+                        raise RuntimeError(
+                            "refusing oversized raw JSON status body"
+                        )
+                    part = recv_exact(sock, 1)
+                    if part is None:
+                        raise TimeoutError(
+                            "timed out while reading raw JSON status body"
+                        )
+                    raw.extend(part)
             raise RuntimeError(f"bad DVRIP header byte: 0x{head:02x}")
         if length > MAX_FRAME_LENGTH:
             raise RuntimeError(
@@ -458,7 +498,7 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
         final_acks = set()
         final_deadline = time.monotonic() + 10.0
         while time.monotonic() < final_deadline:
-            frame = recv_frame(sock, timeout=1.0)
+            frame = recv_frame(sock, timeout=1.0, allow_raw_json=True)
             kind, value = handle_frame(frame)
             if kind == "timeout":
                 continue
@@ -530,7 +570,11 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
             break
 
         try:
-            frame = early_frames.pop(0) if early_frames else recv_frame(sock, timeout=1.0)
+            frame = (
+                early_frames.pop(0)
+                if early_frames
+                else recv_frame(sock, timeout=1.0, allow_raw_json=True)
+            )
         except (ConnectionError, ConnectionResetError, BrokenPipeError) as exc:
             if max_progress >= 100:
                 connection_closed_after_100 = True

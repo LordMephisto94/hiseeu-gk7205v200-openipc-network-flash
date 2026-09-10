@@ -209,6 +209,33 @@ class SafetyTests(unittest.TestCase):
                 descriptor,
             )
 
+    def test_progress_accepts_unframed_stock_json(self):
+        class Socket:
+            def __init__(self, data):
+                self.data = bytearray(data)
+                self.timeout = None
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, value):
+                self.timeout = value
+
+            def recv(self, count):
+                if not self.data:
+                    return b""
+                result = bytes(self.data[:count])
+                del self.data[:count]
+                return result
+
+        payload = b'{"Name":"OPSystemUpgrade","Ret":53}' + b"\x00"
+        frame = xm_upgrade.recv_frame(
+            Socket(payload), timeout=1.0, allow_raw_json=True
+        )
+        self.assertEqual(frame["msgid"], xm_upgrade.MSG_UPGRADE_PROGRESS)
+        self.assertTrue(frame["raw_json"])
+        self.assertEqual(xm_upgrade.decode_json(frame["body"])["Ret"], 53)
+
 
 if __name__ == "__main__":
     unittest.main()
