@@ -3,16 +3,20 @@
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import warnings
 import zipfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import package_safety
+import xm_crc_custom
+import xm_upgrade
 
 
 class SafetyTests(unittest.TestCase):
@@ -28,6 +32,17 @@ class SafetyTests(unittest.TestCase):
                 {"Command": "Burn", "FileName": n} for n in package_safety.RANGES
             ],
         }
+
+    @staticmethod
+    def make_uimage(payload, start, end, name):
+        crc = lambda data: zlib.crc32(data) & 0xFFFFFFFF
+        name_field = name.encode() + b"\0" * (32 - len(name))
+        values = (0x27051956, 0, 0, len(payload), start, end,
+                  crc(payload), 5, 2, 2, 0, name_field)
+        header = struct.pack(">7I4B32s", *values)
+        values = (0x27051956, crc(header), 0, len(payload), start, end,
+                  crc(payload), 5, 2, 2, 0, name_field)
+        return struct.pack(">7I4B32s", *values) + payload
 
     def write_package(self, missing=None, duplicate=None):
         with zipfile.ZipFile(self.path, "w") as archive:
@@ -49,6 +64,17 @@ class SafetyTests(unittest.TestCase):
                     package_safety.check_package(self.path)
         self.write_package(duplicate="InstallDesc")
         with self.assertRaisesRegex(ValueError, "duplicate"):
+            package_safety.check_package(self.path)
+
+    def test_zip_crc_is_checked_before_payload_validation(self):
+        self.write_package()
+        with zipfile.ZipFile(self.path) as archive:
+            info = archive.getinfo("openipc-kernel.img")
+            data_offset = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+        data = bytearray(self.path.read_bytes())
+        data[data_offset] ^= 0x01
+        self.path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "ZIP CRC failure"):
             package_safety.check_package(self.path)
 
     def test_unsupported_target(self):
@@ -124,6 +150,61 @@ class SafetyTests(unittest.TestCase):
         ], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn("--host is required", result.stderr)
+
+    def test_crc_golden_vector(self):
+        build = Path(self.temp.name) / "build"
+        build.mkdir()
+        for i, name in enumerate(package_safety.RANGES):
+            (build / name).write_bytes(
+                bytes((j + i) % 256 for j in range(257 + i * 11))
+            )
+        crc, values, total, product = xm_crc_custom.package_crc(
+            build, package_safety.RANGES
+        )
+        self.assertEqual(crc, "935000522144")
+        self.assertEqual(total, 19350)
+        self.assertEqual(product, 522144)
+        self.assertEqual(len(values), 4)
+
+    def test_valid_package_passes_real_checks(self):
+        build = Path(self.temp.name) / "build"
+        build.mkdir()
+        images = {}
+        for i, (name, (start, end)) in enumerate(package_safety.RANGES.items()):
+            images[name] = self.make_uimage(
+                bytes([i]) * 10000, start, end, name
+            )
+            (build / name).write_bytes(images[name])
+        self.desc["CRC"] = xm_crc_custom.package_crc(
+            build, package_safety.RANGES
+        )[0]
+        with zipfile.ZipFile(self.path, "w") as archive:
+            for name, blob in images.items():
+                archive.writestr(name, blob)
+            archive.writestr("InstallDesc", json.dumps(self.desc))
+        self.assertEqual(
+            package_safety.check_package(self.path)["CRC"],
+            "540201550400",
+        )
+
+    def test_remote_identity_must_match(self):
+        class Camera:
+            def __init__(self, info):
+                self.info = info
+
+            def get_upgrade_info(self):
+                return self.info
+
+        descriptor = {
+            "Hardware": "IPC_GK7205V200_G5C-LQ_S38",
+            "DevID": "000659O61001000000000200",
+        }
+        xm_upgrade.verify_target(Camera(descriptor), descriptor)
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            xm_upgrade.verify_target(
+                Camera({"Hardware": "other", "DevID": descriptor["DevID"]}),
+                descriptor,
+            )
 
 
 if __name__ == "__main__":

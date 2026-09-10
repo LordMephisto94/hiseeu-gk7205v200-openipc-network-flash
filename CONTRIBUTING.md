@@ -74,6 +74,8 @@ For Python changes:
 - keep destructive operations opt-in
 - retain dry-run behaviour where provided
 - validate inputs before writing flash
+- keep the board identity and flash map in `scripts/board_profile.py`
+- preserve the remote Hardware/DevID preflight before a flash starts
 - prefer explicit failure over guessing
 - preserve the final DVRIP firmware chunk `end_flag=1`
 - do not remove package/ZIP validation without a strong reason

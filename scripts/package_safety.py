@@ -5,15 +5,11 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from board_profile import RANGES, TARGET_DEVID, TARGET_HARDWARE
 from build_xm_openipc import validate_uimage
 from xm_crc_custom import package_crc
 
-RANGES = {
-    "openipc-kernel.img": (0x050000, 0x250000),
-    "openipc-rootfs.img": (0x250000, 0x750000),
-    "openipc-rootfs-data.img": (0x750000, 0x7B0000),
-    "u-boot.env.img": (0x030000, 0x040000),
-}
+MAX_PACKAGE_BYTES = 16 * 1024 * 1024
 
 
 def check_package(path):
@@ -21,7 +17,17 @@ def check_package(path):
     def refuse(reason):
         raise ValueError(f"Refusing package: {reason}")
 
-    with zipfile.ZipFile(path) as archive:
+    package_path = Path(path)
+    if package_path.stat().st_size > MAX_PACKAGE_BYTES:
+        refuse(f"package is larger than {MAX_PACKAGE_BYTES} bytes")
+
+    with zipfile.ZipFile(package_path) as archive:
+        try:
+            bad = archive.testzip()
+        except zipfile.BadZipFile as exc:
+            refuse(f"invalid ZIP data: {exc}")
+        if bad:
+            refuse(f"ZIP CRC failure: {bad}")
         names = archive.namelist()
         if len(names) != len(set(names)):
             refuse("duplicate ZIP entries")
@@ -36,9 +42,9 @@ def check_package(path):
         desc = json.loads(archive.read("InstallDesc"))
         if not isinstance(desc, dict):
             refuse("InstallDesc must be an object")
-        if desc.get("Hardware") != "IPC_GK7205V200_G5C-LQ_S38":
+        if desc.get("Hardware") != TARGET_HARDWARE:
             refuse("unsupported Hardware")
-        if desc.get("DevID") != "000659O61001000000000200":
+        if desc.get("DevID") != TARGET_DEVID:
             refuse("unsupported DevID")
         expected = [{"Command": "Burn", "FileName": name} for name in RANGES]
         if desc.get("UpgradeCommand") != expected:
