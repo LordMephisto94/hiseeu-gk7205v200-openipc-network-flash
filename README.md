@@ -184,6 +184,26 @@ env PYTHONPATH=$HOME/Documents/python-dvr python scripts/netip_shell_dynamic.py 
 
 ## 3. Capture the rotating NetIPTelnet CheckCode
 
+### Confirm the camera in iCSee first
+
+Before using the network tools, open **About Device** in the iCSee app and
+check the identity shown by the camera:
+
+```text
+Device Version:  IPC_GK7205V200_G5C-LQ_S38
+Software family: 000659O6
+Publish Date:    2022-11-08
+```
+
+The `Device Version` must match exactly. The app shows the shorter `000659O6`
+firmware family rather than the complete XM `DevID`; the full descriptor value
+is checked later by the stock updater when the package is applied.
+
+With the Cloud toggle enabled and the packet capture already running, using
+the app's **Restart** control is a convenient way to make the camera send a
+fresh registration/heartbeat packet. Wait for the camera to return online and
+capture for another 30–60 seconds before stopping `tcpdump`.
+
 ### Why this is necessary
 
 XM's `NetIPTelnet` diagnostic endpoint is gated by a rotating 32-bit **CheckCode**. A stale value produces `Ret=107`.
