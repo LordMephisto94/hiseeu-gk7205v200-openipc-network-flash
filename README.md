@@ -142,9 +142,13 @@ scripts/
 ├── xm_crc_custom.py
 ├── reorder_xm_env_last.py
 ├── xm_upgrade.py
-├── telnet_shell.py        # historical/diagnostic; not required by main path
-└── telnet_opener.py       # historical/diagnostic; not required by main path
+└── board_profile.py       # shared hardware identity and flash map
 ```
+
+The old Telnet-opening helpers were removed from the supported tools. They
+used XM's `SkipCheck` descriptors to expose an unauthenticated root shell and
+are not needed for this conversion path. Use the authenticated DVRIP
+`NetIPTelnet` helper above instead.
 
 You also need:
 
@@ -163,7 +167,10 @@ The Python scripts that use DVRIP import:
 from dvrip import DVRIPCam
 ```
 
-The exact `python-dvr` revision used in the original session was not recorded. No dependency revision is claimed as verified by this repository. Record the commit hash of your checkout with your installation notes; network operation requires `DVRIPCam` and `send_custom(..., version=1)`.
+Record the exact `python-dvr` commit used for a flash. Network operation
+requires `DVRIPCam`, `get_upgrade_info()` and
+`send_custom(..., version=1)`; the uploader now checks the remote hardware
+identity before it asks for the destructive confirmation.
 
 If `dvrip.py` is in a separate checkout, use `PYTHONPATH`, for example:
 
@@ -549,7 +556,12 @@ env PYTHONPATH=$HOME/Documents/python-dvr \
 
 Nothing is sent without `--flash`, which also requires an explicit `--host`. Offline validation and `--help` do not require the `dvrip` dependency.
 
-Validation rejects missing or duplicate entries, unsupported package Hardware/DevID, unexpected commands or burn ordering, invalid wrapper checksums or write ranges, and a mismatched custom package CRC. These checks validate package contents; they do not establish the identity or compatibility of a connected camera.
+Offline validation rejects missing or duplicate entries, unsupported package Hardware/DevID, unexpected commands or burn ordering, invalid wrapper checksums or write ranges, and a mismatched custom package CRC. The connected-camera identity check happens only when `--flash` is used.
+
+When `--flash` is used, the uploader also queries the connected camera and
+requires its `Hardware` and `DevID` to match the package. `--force-target` is
+available only for a manually verified exception and should not be used as a
+normal workflow.
 
 Inspect the displayed:
 
@@ -603,6 +615,12 @@ The script prompts for the admin password and requires an explicit confirmation 
 ```text
 FLASH CAMERA_IP
 ```
+
+Before that confirmation it displays the camera's reported `Hardware` and
+`DevID`. Stop if they do not match the package. The transfer requires the
+final firmware chunks to be acknowledged or for the camera to enter its flash
+progress state; after 100%, the expected terminal status is `Ret=515` or the
+camera must close the DVRIP session as it reboots.
 
 Once data transfer begins:
 

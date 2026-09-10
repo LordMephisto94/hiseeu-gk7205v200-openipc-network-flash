@@ -43,6 +43,7 @@ MSG_KEEPALIVE = 1006
 MSG_KEEPALIVE_REPLY = 1007
 
 CHUNK_SIZE = 32768
+MAX_FRAME_LENGTH = 4 * 1024 * 1024
 
 
 def recv_exact(sock: socket.socket, n: int) -> bytes | None:
@@ -79,6 +80,10 @@ def recv_frame(sock: socket.socket, timeout: float = 1.0):
 
         if head != 0xFF:
             raise RuntimeError(f"bad DVRIP header byte: 0x{head:02x}")
+        if length > MAX_FRAME_LENGTH:
+            raise RuntimeError(
+                f"refusing oversized DVRIP frame body: {length} bytes"
+            )
 
         body = recv_exact(sock, length)
         if body is None:
@@ -160,6 +165,7 @@ def validate_package(path: Path):
             "Refusing: file is not a valid ZIP-based XM firmware package."
         )
 
+    descriptor = None
     with zipfile.ZipFile(path, "r") as zf:
         bad = zf.testzip()
         if bad:
@@ -174,16 +180,16 @@ def validate_package(path: Path):
 
         if "InstallDesc" in names:
             try:
-                desc = json.loads(zf.read("InstallDesc").decode("utf-8"))
+                descriptor = json.loads(zf.read("InstallDesc").decode("utf-8"))
             except Exception as exc:
                 raise SystemExit(f"Refusing: cannot parse InstallDesc: {exc}")
 
             print("\nInstallDesc:")
             for key in ("Hardware", "DevID", "Vendor", "CompatibleVersion", "CRC"):
-                if key in desc:
-                    print(f"  {key:<18}: {desc[key]}")
+                if key in descriptor:
+                    print(f"  {key:<18}: {descriptor[key]}")
 
-            cmds = desc.get("UpgradeCommand", [])
+            cmds = descriptor.get("UpgradeCommand", [])
             if isinstance(cmds, list):
                 print("  UpgradeCommand:")
                 for c in cmds:
@@ -195,7 +201,7 @@ def validate_package(path: Path):
         else:
             print("\nWARNING: package has no InstallDesc entry.")
 
-    return size
+    return size, descriptor
 
 
 def make_cam(host: str, port: int, user: str, password: str):
@@ -256,6 +262,47 @@ def start_upgrade(cam: DVRIPCam, file_size: int):
         raise RuntimeError(f"camera rejected upgrade start: {reply!r}")
 
 
+def verify_target(cam: DVRIPCam, descriptor: dict, force: bool = False):
+    """Confirm the logged-in camera matches the package before any write."""
+    info = cam.get_upgrade_info()
+    if not isinstance(info, dict):
+        if force:
+            print("WARNING: camera identity query returned no usable data; continuing because --force-target was supplied.")
+            return
+        raise RuntimeError(
+            "camera identity query returned no usable data; refusing to flash "
+            "without --force-target"
+        )
+
+    # Some DVRIP revisions wrap the response under the command name.
+    nested = info.get("OPSystemUpgrade")
+    if isinstance(nested, dict):
+        info = {**info, **nested}
+
+    aliases = {
+        "Hardware": ("Hardware", "hardware"),
+        "DevID": ("DevID", "DeviceID", "DevId", "device_id"),
+    }
+    mismatches = []
+    observed = {}
+    for field, names in aliases.items():
+        value = next((info.get(name) for name in names if info.get(name) is not None), None)
+        observed[field] = value
+        expected = descriptor.get(field)
+        if value is None:
+            mismatches.append(f"{field} unavailable (expected {expected!r})")
+        elif value != expected:
+            mismatches.append(f"{field}={value!r} (expected {expected!r})")
+
+    print(f"Camera identity: Hardware={observed['Hardware']!r} DevID={observed['DevID']!r}")
+    if mismatches:
+        message = "camera identity does not match the package: " + "; ".join(mismatches)
+        if not force:
+            raise RuntimeError(message + "; refusing to flash (use --force-target only if verified manually)")
+        print("WARNING: " + message)
+        print("WARNING: continuing because --force-target was supplied.")
+
+
 def upload_file(cam: DVRIPCam, path: Path, file_size: int):
     sock = cam.socket
     if sock is None:
@@ -272,6 +319,7 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
 
     sent = 0
     acked = set()
+    early_frames = []
     started = time.monotonic()
 
     def handle_frame(frame):
@@ -297,12 +345,83 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
         return ("other", (msgid, seq, obj, frame["body"]))
 
     with path.open("rb") as fh:
+        chunks = []
         for seq in range(total_chunks):
             chunk = fh.read(CHUNK_SIZE)
             if not chunk:
                 raise RuntimeError("unexpected EOF while reading firmware")
+            chunks.append(chunk)
 
-            is_last = (seq == total_chunks - 1)
+        # The vendor sends the final two chunks back-to-back.  Send them as a
+        # pair, then require either their ACKs or the first flash-progress
+        # frame.  This preserves the observed wire sequence while detecting a
+        # lost final packet instead of silently proceeding.
+        streamed = max(0, total_chunks - 2)
+        for seq, chunk in enumerate(chunks[:streamed]):
+            got_our_ack = False
+            for attempt in range(1, 4):
+                send_raw_frame(
+                    sock,
+                    session=session,
+                    seq=seq,
+                    msgid=MSG_UPGRADE_DATA,
+                    body=chunk,
+                    version=1,
+                    channel=0,
+                    end_flag=0,
+                )
+
+                if attempt == 1:
+                    sent += len(chunk)
+                    pct = sent * 100.0 / file_size
+                    print(
+                        f"\rTransfer: {pct:6.2f}%  "
+                        f"{sent:,}/{file_size:,} bytes  "
+                        f"chunk {seq + 1}/{total_chunks}",
+                        end="",
+                        flush=True,
+                    )
+                elif not got_our_ack:
+                    print(f"\nRetrying chunk {seq} (attempt {attempt}/3)...")
+
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline:
+                    frame = recv_frame(sock, timeout=1.0)
+                    kind, value = handle_frame(frame)
+                    if kind == "timeout":
+                        continue
+                    if kind == "ack":
+                        if value == seq:
+                            got_our_ack = True
+                            break
+                        continue
+                    if kind == "ack_bad":
+                        raise RuntimeError(
+                            f"camera returned a bad ACK for chunk {value[0]}: "
+                            f"{value[1]!r}"
+                        )
+                    if kind == "progress":
+                        raise RuntimeError(
+                            f"camera entered flash progress early at chunk {seq}: "
+                            f"{value!r}"
+                        )
+                    if kind == "other":
+                        msgid, rseq, obj, raw = value
+                        if obj is not None:
+                            print(
+                                f"\nOther DVRIP frame during transfer: "
+                                f"msgid={msgid} seq={rseq} JSON={obj}"
+                            )
+                if got_our_ack:
+                    break
+            if not got_our_ack:
+                raise TimeoutError(
+                    f"no 0x05F3 Ret:100 ACK for chunk {seq} after 3 attempts"
+                )
+
+        final_start = streamed
+        for seq in range(final_start, total_chunks):
+            chunk = chunks[seq]
             send_raw_frame(
                 sock,
                 session=session,
@@ -311,9 +430,8 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
                 body=chunk,
                 version=1,
                 channel=0,
-                end_flag=1 if is_last else 0,
+                end_flag=1 if seq == total_chunks - 1 else 0,
             )
-
             sent += len(chunk)
             pct = sent * 100.0 / file_size
             print(
@@ -324,55 +442,41 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
                 flush=True,
             )
 
-            # The captured vendor session ACKed chunks 0..235. It then sent
-            # chunks 236 and 237 back-to-back, with end_flag=1 on chunk 237,
-            # and the camera transitioned straight into 0x05F4 progress.
-            if seq >= total_chunks - 2:
+        final_acks = set()
+        final_deadline = time.monotonic() + 10.0
+        while time.monotonic() < final_deadline:
+            frame = recv_frame(sock, timeout=1.0)
+            kind, value = handle_frame(frame)
+            if kind == "timeout":
                 continue
-
-            deadline = time.monotonic() + 10.0
-            got_our_ack = False
-
-            while time.monotonic() < deadline:
-                frame = recv_frame(sock, timeout=1.0)
-                kind, value = handle_frame(frame)
-
-                if kind == "timeout":
-                    continue
-
-                if kind == "ack":
-                    if value == seq:
-                        got_our_ack = True
-                        break
-                    # A delayed ACK for an earlier chunk is harmless.
-                    continue
-
-                if kind == "ack_bad":
-                    raise RuntimeError(
-                        f"camera returned a bad ACK for chunk {value[0]}: "
-                        f"{value[1]!r}"
-                    )
-
-                if kind == "progress":
-                    # Progress before the final chunks would be unexpected,
-                    # but preserve the evidence rather than discarding it.
-                    raise RuntimeError(
-                        f"camera entered flash progress early at chunk {seq}: "
-                        f"{value!r}"
-                    )
-
-                if kind == "other":
-                    msgid, rseq, obj, raw = value
-                    if obj is not None:
-                        print(
-                            f"\nOther DVRIP frame during transfer: "
-                            f"msgid={msgid} seq={rseq} JSON={obj}"
-                        )
-
-            if not got_our_ack:
-                raise TimeoutError(
-                    f"no 0x05F3 Ret:100 ACK for chunk {seq} within 10 seconds"
+            if kind == "ack":
+                if value >= final_start:
+                    final_acks.add(value)
+                if len(final_acks) == total_chunks - final_start:
+                    break
+                continue
+            if kind == "ack_bad":
+                raise RuntimeError(
+                    f"camera returned a bad ACK for chunk {value[0]}: "
+                    f"{value[1]!r}"
                 )
+            if kind == "progress":
+                early_frames.append(frame)
+                break
+            if kind == "other":
+                msgid, rseq, obj, raw = value
+                if obj is not None:
+                    print(
+                        f"\nOther DVRIP frame during final transfer: "
+                        f"msgid={msgid} seq={rseq} JSON={obj}"
+                    )
+
+        expected_final = set(range(final_start, total_chunks))
+        if final_acks != expected_final and not early_frames:
+            raise TimeoutError(
+                "final firmware chunks were not acknowledged and no flash "
+                "progress frame arrived"
+            )
 
     print()
     elapsed = time.monotonic() - started
@@ -383,7 +487,7 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
     )
     print(
         f"Chunk ACKs observed: {len(acked)}/{total_chunks} "
-        "(expected: vendor capture ACKed 0..235, then entered progress)."
+        "(the final chunks may transition directly into flash progress)."
     )
     print("Waiting for camera flash progress/status...")
 
@@ -393,6 +497,7 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
     terminal_values = []
     first_100_at = None
     last_activity = time.monotonic()
+    connection_closed_after_100 = False
     hard_deadline = time.monotonic() + 300
 
     # The real VideoPlayTool trace continues after multiple Ret=100 frames and
@@ -412,9 +517,10 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
             break
 
         try:
-            frame = recv_frame(sock, timeout=1.0)
+            frame = early_frames.pop(0) if early_frames else recv_frame(sock, timeout=1.0)
         except (ConnectionError, ConnectionResetError, BrokenPipeError) as exc:
             if max_progress >= 100:
+                connection_closed_after_100 = True
                 print(
                     f"\nCamera connection closed after 100% ({type(exc).__name__}); "
                     "reboot is expected."
@@ -425,6 +531,7 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
             # EBADF can occur if python-dvr closes its descriptor while the
             # camera is rebooting.  Treat it as expected only after 100%.
             if exc.errno == 9 and max_progress >= 100:
+                connection_closed_after_100 = True
                 print(
                     "\nLocal DVRIP descriptor closed after 100% (EBADF); "
                     "camera reboot/session teardown is expected."
@@ -522,12 +629,19 @@ def upload_file(cam: DVRIPCam, path: Path, file_size: int):
         )
 
     # In the known-good stock capture the camera emits Ret=515 after 100% and
-    # then reboots successfully.  Preserve/report it, but do not mislabel it as
-    # a flash failure merely because it is >100.
-    if terminal_values:
-        print(
-            "Note: non-percentage Ret values were observed after 100%. "
-            "The validated stock flow emits Ret=515 before reboot."
+    # then reboots successfully. A close after 100% is also accepted because
+    # the camera may tear down the DVRIP session before the terminal frame is
+    # delivered. An open, silent session is ambiguous and must not be reported
+    # as a completed flash.
+    if not terminal_values and not connection_closed_after_100:
+        raise RuntimeError(
+            "camera reached 100% but sent no terminal status and did not "
+            "close the session; flash completion is unconfirmed"
+        )
+    if terminal_values and 515 not in terminal_values:
+        raise RuntimeError(
+            f"camera returned unexpected terminal status {terminal_values!r}; "
+            "expected Ret=515"
         )
 
     print("Camera reached 100%; upgrade transport/flash stage completed.")
@@ -555,6 +669,11 @@ def main():
         action="store_true",
         help="skip the final interactive confirmation",
     )
+    ap.add_argument(
+        "--force-target",
+        action="store_true",
+        help="continue despite missing or mismatched remote Hardware/DevID (dangerous)",
+    )
     args = ap.parse_args()
     if args.flash and not args.host:
         ap.error("--host is required with --flash")
@@ -563,7 +682,7 @@ def main():
     if not path.is_file():
         raise SystemExit(f"No such firmware file: {path}")
 
-    size = validate_package(path)
+    size, descriptor = validate_package(path)
 
     if not args.flash:
         print(
@@ -571,19 +690,6 @@ def main():
             "Re-run with --flash when you are ready."
         )
         return 0
-
-    print(
-        "\n*** THIS WILL WRITE THE CAMERA'S SPI FLASH. ***\n"
-        "Do not power-cycle the camera once transfer begins."
-    )
-
-    if not args.yes:
-        answer = input(
-            f"Type exactly FLASH {args.host} to continue: "
-        ).strip()
-        if answer != f"FLASH {args.host}":
-            print("Cancelled.")
-            return 1
 
     password = args.password
     if password is None:
@@ -597,6 +703,20 @@ def main():
             raise RuntimeError("DVRIP login failed")
 
         print(f"Authenticated. Session = 0x{int(cam.session):08X}")
+        verify_target(cam, descriptor, force=args.force_target)
+
+        print(
+            "\n*** THIS WILL WRITE THE CAMERA'S SPI FLASH. ***\n"
+            "Do not power-cycle the camera once transfer begins."
+        )
+
+        if not args.yes:
+            answer = input(
+                f"Type exactly FLASH {args.host} to continue: "
+            ).strip()
+            if answer != f"FLASH {args.host}":
+                print("Cancelled.")
+                return 1
 
         start_upgrade(cam, size)
         upload_file(cam, path, size)

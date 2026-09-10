@@ -24,26 +24,22 @@ import sys
 import zlib
 from pathlib import Path
 
+from board_profile import (
+    ENV_END,
+    ENV_START,
+    FLASH_SIZE,
+    KERNEL_END,
+    KERNEL_START,
+    ROOTFS_DATA_END,
+    ROOTFS_DATA_START,
+    ROOTFS_END,
+    ROOTFS_START,
+    XM_MTD5_START,
+)
+
 UIMAGE_MAGIC = 0x27051956
 UIMAGE_HDR_SIZE = 64
-
-# Conservative layout for this exact 8 MiB XM camera:
-ENV_START    = 0x00030000
-ENV_END      = 0x00040000
-
-# 0x40000-0x50000 intentionally left unused/reserved
-KERNEL_START = 0x00050000
-KERNEL_END   = 0x00250000
-
-ROOTFS_START = 0x00250000
-ROOTFS_END   = 0x00750000
-
-ROOTFS_DATA_START = 0x00750000
-ROOTFS_DATA_END   = 0x007B0000
-
-# Preserve XM factory/config region.
-XM_MTD5_START = 0x007B0000
-FLASH_END     = 0x00800000
+FLASH_END = FLASH_SIZE
 
 
 def die(msg):
